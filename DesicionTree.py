@@ -1,8 +1,9 @@
 import pandas as pd
 import numpy as np
-from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
-from tabulate import tabulate
+from scipy.stats import mode
+
+# from tabulate import tabulate
 
 
 class metric:
@@ -69,12 +70,10 @@ class preprocess:
         recall = np.sum(predict == label) / label.shape[0]
         # F-measure
         f_measure = 2 * precision * recall / (precision + recall)
-        # AUC
-        auc = roc_auc_score(label, predict)
         # G-mean
         g_mean = np.sqrt(precision * recall)
 
-        return np.array([precision, recall, f_measure, auc, g_mean])
+        return np.array([precision, recall, f_measure, g_mean])
 
     def remove_correlated_with_label_by_hellinger(
         data: np.ndarray, label: np.ndarray, threshold: float = 0.4
@@ -121,34 +120,35 @@ class preprocess:
 
         return label
 
-    def OVO(data: np.ndarray, label: np.ndarray, l1: int, l2: int):
+    def OVO(data: np.ndarray, label: np.ndarray, class_i: int, class_j: int):
         """
         One vs One.
+        class_i to 0 and class_j to 1.
         """
         data = data.copy()
         label = label.copy()
-        # Get data which has label l1 or l2
-        data = data[(label == l1) | (label == l2)]
-        # Get label which has label l1 or l2
-        label = label[(label == l1) | (label == l2)]
+        # Get data which has label class_i or class_j
+        data = data[(label == class_i) | (label == class_j)]
+        # Get label which has label class_i or class_j
+        label = label[(label == class_i) | (label == class_j)]
 
         # Change label to 0 or 1
-        label[label == l1] = 0
-        label[label == l2] = 1
+        label[label == class_i] = 0
+        label[label == class_j] = 1
 
         return data, label
 
-    def OVA(label: np.ndarray, l_sel: int):
+    def OVA(label: np.ndarray, class_i: int):
         """
         One vs All.
         """
         label = label.copy()
         # Change our class to -1 to change all remaining to 0
-        label[label == l_sel] = -1
+        label[label == class_i] = -1
         # Cahnge all other class to 0
         label[label != -1] = 0
         # Change selected class to 1
-        label[label == l_sel] = 1
+        label[label == -1] = 1
 
         return label
 
@@ -369,7 +369,7 @@ class DT:
     def predict_label(self, data: np.ndarray):
         predicted = []
         for sample in data:
-            predicted.append(self.predict_sample(sample) > 0.5)
+            predicted.append(int(self.predict_sample(sample) > 0.5))
 
         return np.array(predicted)
 
@@ -386,9 +386,8 @@ class DT:
         n_iteration: int,
         max_depth: int = None,
         cut_off: int = None,
-        print_tabel: bool = False,
-    ):
-        acc = np.empty((0, 5))
+    ) -> dict:
+        acc_metrics = np.empty((0, 4))
         for _ in range(n_iteration):
             # Split data to train and test with sklearn
             data_train, data_test, label_train, label_test = train_test_split(
@@ -398,25 +397,126 @@ class DT:
             # Create model
             model = DT(max_depth=max_depth, cut_off_size=cut_off)
             model.fit(data_train, label_train)
-            predicted = model.predict(data_test)
-            acc = np.vstack((acc, preprocess.accuracy(predicted, label_test)))
+            predicted = model.predict_label(data_test)
+            acc_metrics = np.vstack(
+                (acc_metrics, preprocess.accuracy(predicted, label_test))
+            )
 
-        label_table = ["Precision", "Recall", "F-measure", "AUC", "G-mean"]
-        if print_tabel:
-            print(
-                tabulate(
-                    acc,
-                    headers=label_table,
-                    tablefmt="fancy_grid",
-                    showindex="always",
-                    floatfmt=".4f",
+        avg_acc_metrics = np.mean(acc_metrics, axis=0).round(5)
+        return {
+            "Precision": avg_acc_metrics[0],
+            "Recall": avg_acc_metrics[1],
+            "F-measure": avg_acc_metrics[2],
+            "G-mean": avg_acc_metrics[3],
+        }
+
+    def OVO(
+        data: np.ndarray,
+        label: np.ndarray,
+        n_iteration: int,
+        max_depth: int = None,
+        cut_off: int = None,
+    ):
+        acc_metrics = np.empty((0, 4))
+        for _ in range(n_iteration):
+            # Split data to train and test with sklearn
+            data_train, data_test, label_train, label_test = train_test_split(
+                data, label, test_size=0.3, stratify=label
+            )
+
+            # Create model
+            model = DT(max_depth=max_depth, cut_off_size=cut_off)
+            n_class = np.unique(label_train).shape[0]
+            predicted = np.empty((label_test.shape[0], 0))
+            for i in range(n_class):
+                for j in range(i + 1, n_class):
+                    # Get data which has label i or j
+                    data_ij, label_ij = preprocess.OVO(
+                        data=data_train,
+                        label=label_train,
+                        class_i=i,
+                        class_j=j,
+                    )
+
+                    # Create model
+                    model.fit(data_ij, label_ij)
+
+                    # Predict label
+                    predicted_ij = model.predict_label(data_test)
+                    # relabel predicted_ij
+                    predicted_ij[predicted_ij == 0] = -1
+                    predicted_ij[predicted_ij == 1] = j
+                    predicted_ij[predicted_ij == -1] = i
+
+                    # Add predicted_ij to predicted
+                    predicted = np.hstack(
+                        (predicted, predicted_ij.reshape((-1, 1)))
+                    )
+
+            # Get label of predicted by selecting most frequent(voating)
+            predicted_label = mode(predicted, axis=1, keepdims=True)[
+                0
+            ].reshape(-1)
+
+            acc_metrics = np.vstack(
+                (acc_metrics, preprocess.accuracy(predicted_label, label_test))
+            )
+
+        avg_acc_metrics = np.mean(acc_metrics, axis=0).round(5)
+        return {
+            "Precision": avg_acc_metrics[0],
+            "Recall": avg_acc_metrics[1],
+            "F-measure": avg_acc_metrics[2],
+            "G-mean": avg_acc_metrics[3],
+        }
+
+    def OVA(
+        data: np.ndarray,
+        label: np.ndarray,
+        n_iteration: int,
+        max_depth: int = None,
+        cut_off: int = None,
+    ):
+        acc_metrics = np.empty((0, 4))
+        for _ in range(n_iteration):
+            # Split data to train and test with sklearn
+            data_train, data_test, label_train, label_test = train_test_split(
+                data, label, test_size=0.3, stratify=label
+            )
+
+            # Create model
+            model = DT(max_depth=max_depth, cut_off_size=cut_off)
+            n_class = np.unique(label_train).shape[0]
+            predicted = np.empty((label_test.shape[0], 0))
+            for i in range(n_class):
+                # Get data which has label i
+                label_i = preprocess.OVA(label=label_train, class_i=i)
+
+                # Create model
+                model.fit(data_train, label_i)
+
+                # Predict label
+                predicted_i = model.predict_probability(data_test)
+
+                # Add predicted_i to predicted
+                predicted = np.hstack(
+                    (predicted, predicted_i.reshape((-1, 1)))
                 )
+
+            # Get label of predicted by selecting most frequent(voating)
+            predicted_label = np.argmax(predicted, axis=1)
+
+            acc_metrics = np.vstack(
+                (acc_metrics, preprocess.accuracy(predicted_label, label_test))
             )
-        for metrinc in label_table:
-            print(
-                f"avg {metrinc}:",
-                f"{np.mean(acc[:, label_table.index(metrinc)]).round(4)}",
-            )
+
+        avg_acc_metrics = np.mean(acc_metrics, axis=0).round(5)
+        return {
+            "Precision": avg_acc_metrics[0],
+            "Recall": avg_acc_metrics[1],
+            "F-measure": avg_acc_metrics[2],
+            "G-mean": avg_acc_metrics[3],
+        }
 
 
 DS_path = "Dataset/Covid19HDDT.csv"
@@ -426,16 +526,15 @@ cut_off = [10, 50, 500]
 n_iteration = 10
 
 data, label = preprocess.read_dataset(DS_path)
-
-label_minority_majority = preprocess.minority_0_majority_1(label)
-# Remove most correlatied feature from data
 data = preprocess.remove_correlated_with_label_by_hellinger(
-    data=data, label=label_minority_majority, threshold=0.3
+    data=data, label=label, threshold=0.3
 )
 
-# DT.run_HDDT(
-#     data,
-#     label_minority_majority,
-#     max_depth=2,
-#     n_iteration=n_iteration,
-# )
+
+acc = DT.OVA(
+    data,
+    label,
+    n_iteration=n_iteration,
+)
+
+print(acc)
