@@ -152,6 +152,21 @@ class preprocess:
 
         return label
 
+    def bootstrap(data: np.ndarray, label: np.ndarray):
+        """
+        Bootstrap data and label.
+        """
+        data = data.copy()
+        label = label.copy()
+
+        # Get number of data
+        n_data = data.shape[0]
+
+        # Get index of data
+        index = np.random.choice(n_data, n_data, replace=True)
+
+        return data[index], label[index]
+
 
 class DT:
     def __init__(self, max_depth=None, cut_off_size=None) -> None:
@@ -332,26 +347,33 @@ class DT:
 
     def predict_sample(self, sample):
         """
-        Predict label of sample.
+        Predict probability of sample being class 1.
         """
 
         # Check if tree is leaf
         if self.selected_attribute is None:
-            return self.n_positive >= self.n_negative
+            return self.n_positive / self.n_data
 
         # Get value of selected_attribute
         value = sample[self.selected_attribute]
 
         # Check if value is not in distinct_value
         if value not in self.child.keys():
-            return self.n_positive >= self.n_negative
+            return self.n_positive / self.n_data
 
         # Predict label of sample
         return self.child[value].predict_sample(
             np.delete(sample, self.selected_attribute)
         )
 
-    def predict(self, data: np.ndarray):
+    def predict_label(self, data: np.ndarray):
+        predicted = []
+        for sample in data:
+            predicted.append(self.predict_sample(sample) > 0.5)
+
+        return np.array(predicted)
+
+    def predict_probability(self, data: np.ndarray):
         predicted = []
         for sample in data:
             predicted.append(self.predict_sample(sample))
@@ -411,9 +433,9 @@ data = preprocess.remove_correlated_with_label_by_hellinger(
     data=data, label=label_minority_majority, threshold=0.3
 )
 
-DT.run_HDDT(
-    data,
-    label_minority_majority,
-    max_depth=2,
-    n_iteration=n_iteration,
-)
+# DT.run_HDDT(
+#     data,
+#     label_minority_majority,
+#     max_depth=2,
+#     n_iteration=n_iteration,
+# )
