@@ -5,6 +5,45 @@ from sklearn.model_selection import train_test_split
 from tabulate import tabulate
 
 
+class metric:
+    def n_v_pv_nv(x: np.ndarray, y: np.ndarray, value):
+        """
+        Return number of positive and negative label.
+        """
+
+        # Get label of data which has value in column_id
+        label = y[x == value]
+
+        return np.sum(label), label.shape[0] - np.sum(label)
+
+    def calc_hellinger_distance(x: np.ndarray, y: np.ndarray):
+        """
+        Calculate Hellinger distance of a column and label.
+        """
+
+        # Get number of positive and negative label
+        n_positive_label = np.sum(y)
+        n_negative_label = x.shape[0] - n_positive_label
+
+        # Initialize Hellinger distance
+        hellinger = 0
+
+        # Calculate Hellinger distance
+        for value in np.unique(x):
+            # Get label of data which has value in column_id
+            (
+                n_value_positive_label,
+                n_value_negative_label,
+            ) = metric.n_v_pv_nv(x, y, value)
+
+            hellinger += (
+                np.sqrt(n_value_positive_label / n_positive_label)
+                - np.sqrt(n_value_negative_label / n_negative_label)
+            ) ** 2
+
+        return np.sqrt(hellinger)
+
+
 class preprocess:
     def read_dataset(file_path: str):
         """
@@ -16,7 +55,7 @@ class preprocess:
         # Get data from data and convert to numpy array
         data = dataset.iloc[:, :-1].to_numpy().astype(int)
         # Get label from data and convert to numpy array
-        label = dataset.iloc[:, -1].to_numpy().astype(bool)
+        label = dataset.iloc[:, -1].to_numpy().astype(int)
 
         return data, label
 
@@ -37,7 +76,7 @@ class preprocess:
 
         return np.array([precision, recall, f_measure, auc, g_mean])
 
-    def remove_correlated_with_label(
+    def remove_correlated_with_label_by_hellinger(
         data: np.ndarray, label: np.ndarray, threshold: float = 0.4
     ):
         """
@@ -52,7 +91,7 @@ class preprocess:
 
         # Calculate correlation of each feature with label
         for i in range(n_features):
-            correlation[i] = np.corrcoef(data[:, i], label)[0, 1]
+            correlation[i] = metric.calc_hellinger_distance(data[:, i], label)
 
         # Get index of features which are correlated with label more than
         # threshold
@@ -62,6 +101,25 @@ class preprocess:
         data = np.delete(data, index, axis=1)
 
         return data
+
+    def minority_0_majority_1(label: np.ndarray):
+        """
+        Change minority class to 0 and majority class to 1.
+        """
+        label = label.copy()
+
+        # Find count of each unique label
+        uniqe_label, count_label = np.unique(label, return_counts=True)
+        # Get label of minority class
+        label_minority = uniqe_label[count_label.argmin()]
+        # Change minority class to -1 for be seprated from others
+        label[label == label_minority] = -1
+        # Change other classes to 1
+        label[label != -1] = 1
+        # Change minority class to 0
+        label[label == -1] = 0
+
+        return label
 
     def OVO(data: np.ndarray, label: np.ndarray, l1: int, l2: int):
         """
@@ -80,20 +138,19 @@ class preprocess:
 
         return data, label
 
-    def OVA(data: np.ndarray, label: np.ndarray, l_sel: int):
+    def OVA(label: np.ndarray, l_sel: int):
         """
         One vs All.
         """
-        data = data.copy()
         label = label.copy()
         # Change our class to -1 to change all remaining to 0
         label[label == l_sel] = -1
         # Cahnge all other class to 0
-        label[label != l_sel] = 0
+        label[label != -1] = 0
         # Change selected class to 1
         label[label == l_sel] = 1
 
-        return data, label
+        return label
 
 
 class DT:
@@ -121,48 +178,43 @@ class DT:
         self.n_data = self.data.shape[0]
         # Get number of features
         self.n_features = self.data.shape[1]
-        # Find distinct value of each column
-        self.distinct_value = [
-            np.unique(self.data[:, i]) for i in range(self.n_features)
-        ]
         # Get number of positive and negative label
         self.n_positive = np.sum(self.label)
         self.n_negative = self.n_data - self.n_positive
 
-    def n_v_pv_nv(self, column_id, value):
+    def n_v_pv_nv(self, x: np.ndarray, y: np.ndarray, value):
         """
-        Return total number of data which has value in column_id
-        and number of positive and negative label.
+        Return number of positive and negative label.
         """
 
         # Get label of data which has value in column_id
-        label = self.label[self.data[:, column_id] == value]
+        label = y[x == value]
 
-        return label.shape[0], np.sum(label), label.shape[0] - np.sum(label)
+        return np.sum(label), label.shape[0] - np.sum(label)
 
-    def calc_hellinger_distance(self, column_id: int):
+    def calc_hellinger_distance(self, x: np.ndarray, y: np.ndarray):
         """
-        Calculate Hellinger distance of a column.
+        Calculate Hellinger distance of a column and label.
         """
 
-        # Get distinct value of column
-        distinct_value = self.distinct_value[column_id]
+        # Get number of positive and negative label
+        n_positive_label = np.sum(y)
+        n_negative_label = x.shape[0] - n_positive_label
 
         # Initialize Hellinger distance
         hellinger = 0
 
         # Calculate Hellinger distance
-        for value in distinct_value:
+        for value in np.unique(x):
             # Get label of data which has value in column_id
             (
-                n_value,
                 n_value_positive_label,
                 n_value_negative_label,
-            ) = self.n_v_pv_nv(column_id, value)
+            ) = self.n_v_pv_nv(x, y, value)
 
             hellinger += (
-                np.sqrt(n_value_positive_label / self.n_positive)
-                - np.sqrt(n_value_negative_label / self.n_negative)
+                np.sqrt(n_value_positive_label / n_positive_label)
+                - np.sqrt(n_value_negative_label / n_negative_label)
             ) ** 2
 
         return np.sqrt(hellinger)
@@ -181,7 +233,9 @@ class DT:
         # Calculate Hellinger distance of each column
         for i in range(self.n_features):
             # Calculate Hellinger distance of column i
-            hellinger_i = self.calc_hellinger_distance(column_id=i)
+            hellinger_i = self.calc_hellinger_distance(
+                self.data[:, i], self.label
+            )
 
             # Update Hellinger distance and column id
             if hellinger_i > max_hellinger:
@@ -196,8 +250,7 @@ class DT:
         """
 
         # Get distinct value of selected_attribute
-        distinct_value = self.distinct_value[selected_attribute]
-
+        distinct_value = np.unique(self.data[:, selected_attribute])
         # Initialize child
         child = {}
 
@@ -267,6 +320,16 @@ class DT:
         # Split data by selected attribute
         self.child = self.split_child(self.selected_attribute)
 
+        self.remove_data()
+
+    def remove_data(self):
+        """
+        remove data and label.
+        """
+
+        self.data = None
+        self.label = None
+
     def predict_sample(self, sample):
         """
         Predict label of sample.
@@ -280,7 +343,7 @@ class DT:
         value = sample[self.selected_attribute]
 
         # Check if value is not in distinct_value
-        if value not in self.distinct_value[self.selected_attribute]:
+        if value not in self.child.keys():
             return self.n_positive >= self.n_negative
 
         # Predict label of sample
@@ -295,6 +358,44 @@ class DT:
 
         return np.array(predicted)
 
+    def run_HDDT(
+        data: np.ndarray,
+        label: np.ndarray,
+        n_iteration: int,
+        max_depth: int = None,
+        cut_off: int = None,
+        print_tabel: bool = False,
+    ):
+        acc = np.empty((0, 5))
+        for _ in range(n_iteration):
+            # Split data to train and test with sklearn
+            data_train, data_test, label_train, label_test = train_test_split(
+                data, label, test_size=0.3, stratify=label
+            )
+
+            # Create model
+            model = DT(max_depth=max_depth, cut_off_size=cut_off)
+            model.fit(data_train, label_train)
+            predicted = model.predict(data_test)
+            acc = np.vstack((acc, preprocess.accuracy(predicted, label_test)))
+
+        label_table = ["Precision", "Recall", "F-measure", "AUC", "G-mean"]
+        if print_tabel:
+            print(
+                tabulate(
+                    acc,
+                    headers=label_table,
+                    tablefmt="fancy_grid",
+                    showindex="always",
+                    floatfmt=".4f",
+                )
+            )
+        for metrinc in label_table:
+            print(
+                f"avg {metrinc}:",
+                f"{np.mean(acc[:, label_table.index(metrinc)]).round(4)}",
+            )
+
 
 DS_path = "Dataset/Covid19HDDT.csv"
 
@@ -304,79 +405,15 @@ n_iteration = 10
 
 data, label = preprocess.read_dataset(DS_path)
 
-
-def run_HDDT(
-    data: np.ndarray,
-    label: np.ndarray,
-    n_iteration: int,
-    max_depth: int = None,
-    cut_off: int = None,
-    print_tabel: bool = False,
-):
-    acc = np.empty((0, 5))
-    for _ in range(n_iteration):
-        # Split data to train and test with sklearn
-        data_train, data_test, label_train, label_test = train_test_split(
-            data, label, test_size=0.3, stratify=label
-        )
-
-        # Create model
-        model = DT(max_depth=max_depth, cut_off_size=cut_off)
-        model.fit(data_train, label_train)
-        predicted = model.predict(data_test)
-        acc = np.vstack((acc, preprocess.accuracy(predicted, label_test)))
-
-    label_table = ["Precision", "Recall", "F-measure", "AUC", "G-mean"]
-    if print_tabel:
-        print(
-            tabulate(
-                acc,
-                headers=label_table,
-                tablefmt="fancy_grid",
-                showindex="always",
-                floatfmt=".4f",
-            )
-        )
-    for metrinc in label_table:
-        print(
-            f"avg {metrinc}:",
-            f"{np.mean(acc[:, label_table.index(metrinc)]).round(4)}",
-        )
-
-
-classes = [0, 1, 2]
-
-
+label_minority_majority = preprocess.minority_0_majority_1(label)
 # Remove most correlatied feature from data
-data = preprocess.remove_correlated_with_label(
-    data=data, label=label, threshold=0.4
+data = preprocess.remove_correlated_with_label_by_hellinger(
+    data=data, label=label_minority_majority, threshold=0.3
 )
 
-
-# Run OVO
-for i in range(len(classes)):
-    for j in range(i + 1, len(classes)):
-        print(f"OVO {classes[i]} vs {classes[j]}:")
-        OVO_data, OVO_label = preprocess.OVO(
-            data=data, label=label, l1=classes[i], l2=classes[j]
-        )
-        run_HDDT(
-            data=OVO_data,
-            label=OVO_label,
-            n_iteration=n_iteration,
-        )
-        print(f"{'='*50}")
-
-
-# Run OVA
-for i in range(len(classes)):
-    print(f"OVA {classes[i]}:")
-    OVA_data, OVA_label = preprocess.OVA(
-        data=data, label=label, l1=classes[i]
-    )
-    run_HDDT(
-        data=OVA_data,
-        label=OVA_label,
-        n_iteration=n_iteration,
-    )
-    print(f"{'='*50}")
+DT.run_HDDT(
+    data,
+    label_minority_majority,
+    max_depth=2,
+    n_iteration=n_iteration,
+)
