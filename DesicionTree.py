@@ -529,12 +529,3 @@ data, label = preprocess.read_dataset(DS_path)
 data = preprocess.remove_correlated_with_label_by_hellinger(
     data=data, label=label, threshold=0.3
 )
-
-
-acc = DT.OVA(
-    data,
-    label,
-    n_iteration=n_iteration,
-)
-
-print(acc)
