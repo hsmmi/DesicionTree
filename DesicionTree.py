@@ -2,6 +2,9 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from scipy.stats import mode
+from sklearn.tree import DecisionTreeClassifier
+import sklearn.metrics as metrics
+from sklearn.ensemble import AdaBoostClassifier
 
 # from tabulate import tabulate
 
@@ -46,15 +49,15 @@ class metric:
 
 
 class preprocess:
-    def read_dataset(file_path: str):
+    def read_dataset(DS_path: str):
         """
-        Read dataset from file_path which is a csv file and return data and
-        label.
+        Read dataset from DS_path which is a csv file and return data
+        and label.
         """
-        # Read data from file_path
-        dataset = pd.read_csv(file_path, sep=",")
+        # Read data from DS_path
+        dataset = pd.read_csv(DS_path, sep=",")
         # Get data from data and convert to numpy array
-        data = dataset.iloc[:, :-1].to_numpy().astype(int)
+        data = dataset.iloc[:, :-1].to_numpy()
         # Get label from data and convert to numpy array
         label = dataset.iloc[:, -1].to_numpy().astype(int)
 
@@ -64,10 +67,11 @@ class preprocess:
         """
         Calculate accuracy of predict.
         """
-        # Precision
-        precision = np.sum(predict == label) / predict.shape[0]
+
+        # Precision with confusion matrix
+        precision = metrics.precision_score(label, predict, average="macro")
         # Recall
-        recall = np.sum(predict == label) / label.shape[0]
+        recall = metrics.recall_score(label, predict, average="macro")
         # F-measure
         f_measure = 2 * precision * recall / (precision + recall)
         # G-mean
@@ -76,7 +80,7 @@ class preprocess:
         return np.array([precision, recall, f_measure, g_mean])
 
     def remove_correlated_with_label_by_hellinger(
-        data: np.ndarray, label: np.ndarray, threshold: float = 0.4
+        data: np.ndarray, label: np.ndarray, threshold: float = 1
     ):
         """
         Remove features which are correlated with label more than threshold.
@@ -152,23 +156,66 @@ class preprocess:
 
         return label
 
-    def bootstrap(data: np.ndarray, label: np.ndarray):
+    def fill_missing_value(data: np.ndarray, method: str = "mean"):
         """
-        Bootstrap data and label.
+        Fill missing value of data.
+        """
+        data = data.copy()
+
+        # Get number of features
+        n_features = data.shape[1]
+
+        # Fill missing value of data
+        for i in range(n_features):
+            # Get index of data which has missing value(nan)
+            index = np.where(np.isnan(data[:, i]))[0]
+            # Fill missing value of data
+            if method == "mean":
+                data[index, i] = np.nanmean(data[:, i])
+            elif method == "median":
+                data[index, i] = np.nanmedian(data[:, i])
+            elif method == "mode":
+                data[index, i] = np.nanmedian(data[:, i])
+            elif method == "random":
+                data[index, i] = np.random.choice(data[:, i], index.shape[0])
+
+        return data
+
+    def bootstrap_with_under_sampling(data: np.ndarray, label: np.ndarray):
+        """
+        Under sampling.
         """
         data = data.copy()
         label = label.copy()
 
-        # Get number of data
-        n_data = data.shape[0]
+        # Get number of each class
+        classes, count = np.unique(label, return_counts=True)
 
-        # Get index of data
-        index = np.random.choice(n_data, n_data, replace=True)
+        # Get number of classes
+        n_classes = len(classes)
 
-        return data[index], label[index]
+        # Get index of each class
+        index = [np.where(label == class_i)[0] for class_i in classes]
+        # shuffle index of each class
+        for i in range(n_classes):
+            np.random.shuffle(index[i])
+
+        # Get number of each class after under sampling
+        count = count.min()
+
+        # Initialize new data and label
+        new_data = np.zeros((count * n_classes, data.shape[1]))
+        new_label = np.zeros(count * n_classes)
+
+        # Under sampling
+        for i in range(n_classes):
+            new_data[count * i : count * (i + 1)] = data[index[i]][:count]
+            new_label[count * i : count * (i + 1)] = label[index[i]][:count]
+
+        return new_data, new_label
 
 
-class DT:
+class HDDT:
     def __init__(self, max_depth=None, cut_off_size=None) -> None:
         self.data = None
         self.n_data = None
@@ -177,14 +224,14 @@ class DT:
         self.n_positive = None
         self.n_negative = None
         self.distinct_value = None
-        self.child: DT = None
+        self.child: HDDT = None
         self.max_depth = max_depth
         self.cut_off_size = cut_off_size
         self.selected_attribute = None
 
     def fill_objects(self, data: np.ndarray, label: np.ndarray):
         """
-        Get data and label then fill related objects in DT.
+        Get data and label then fill related objects in HDDT.
         """
         self.data = data
         self.label = label
@@ -302,7 +349,7 @@ class DT:
         """
 
         # Create subtree
-        subtree = DT()
+        subtree = HDDT()
         if self.max_depth is not None:
             subtree.max_depth = self.max_depth - 1
 
@@ -366,7 +413,7 @@ class DT:
             np.delete(sample, self.selected_attribute)
         )
 
-    def predict_label(self, data: np.ndarray):
+    def predict(self, data: np.ndarray):
         predicted = []
         for sample in data:
             predicted.append(int(self.predict_sample(sample) > 0.5))
@@ -395,9 +442,9 @@ class DT:
             )
 
             # Create model
-            model = DT(max_depth=max_depth, cut_off_size=cut_off)
+            model = HDDT(max_depth=max_depth, cut_off_size=cut_off)
             model.fit(data_train, label_train)
-            predicted = model.predict_label(data_test)
+            predicted = model.predict(data_test)
             acc_metrics = np.vstack(
                 (acc_metrics, preprocess.accuracy(predicted, label_test))
             )
@@ -425,7 +472,7 @@ class DT:
             )
 
             # Create model
-            model = DT(max_depth=max_depth, cut_off_size=cut_off)
+            model = HDDT(max_depth=max_depth, cut_off_size=cut_off)
             n_class = np.unique(label_train).shape[0]
             predicted = np.empty((label_test.shape[0], 0))
             for i in range(n_class):
@@ -442,7 +489,7 @@ class DT:
                     model.fit(data_ij, label_ij)
 
                     # Predict label
-                    predicted_ij = model.predict_label(data_test)
+                    predicted_ij = model.predict(data_test)
                     # relabel predicted_ij
                     predicted_ij[predicted_ij == 0] = -1
                     predicted_ij[predicted_ij == 1] = j
@@ -485,7 +532,7 @@ class DT:
             )
 
             # Create model
-            model = DT(max_depth=max_depth, cut_off_size=cut_off)
+            model = HDDT(max_depth=max_depth, cut_off_size=cut_off)
             n_class = np.unique(label_train).shape[0]
             predicted = np.empty((label_test.shape[0], 0))
             for i in range(n_class):
@@ -519,13 +566,176 @@ class DT:
         }
 
 
-DS_path = "Dataset/Covid19HDDT.csv"
+class bagging:
+    def __init__(self, T: int, base_learner: str = "HDDT") -> None:
+        self.T = T
+        self.data = None
+        self.label = None
+        self.base_learner = base_learner
+        self.classifiers = []
+        pass
+
+    def fit(self, data: np.ndarray, label: np.ndarray) -> None:
+        self.data = data
+        self.label = label
+
+        for i in range(self.T):
+            if self.base_learner == "HDDT":
+                model = HDDT(max_depth=2, cut_off_size=100)
+                data_i, label_i = data, label
+            else:
+                model = DecisionTreeClassifier()
+                # Bootstrap data
+                data_i, label_i = preprocess.bootstrap_with_under_sampling(
+                    data=self.data, label=self.label
+                )
+            model.fit(data_i, label_i)
+            self.classifiers.append(model)
+
+    def predict(self, data: np.ndarray) -> np.ndarray:
+        predicted = np.empty((data.shape[0], 0))
+        for classifiers in self.classifiers:
+            predicted = np.hstack(
+                (predicted, classifiers.predict(data).reshape((-1, 1)))
+            )
+        predicted_label = mode(predicted, axis=1, keepdims=True)[0].reshape(-1)
+        return predicted_label
+
+    def run_bagging(
+        self, data: np.ndarray, label: np.ndarray, n_iteration: int
+    ):
+        acc_metrics = np.empty((0, 4))
+        for _ in range(n_iteration):
+            # Split data to train and test with sklearn
+            data_train, data_test, label_train, label_test = train_test_split(
+                data, label, test_size=0.3, stratify=label
+            )
+
+            # Create model
+            self.fit(data_train, label_train)
+            predicted = self.predict(data_test)
+            acc_metrics = np.vstack(
+                (acc_metrics, preprocess.accuracy(predicted, label_test))
+            )
+
+        avg_acc_metrics = np.mean(acc_metrics, axis=0).round(5)
+        std_acc_metrics = np.std(acc_metrics, axis=0).round(5)
+        return {
+            "Avg-Precision": avg_acc_metrics[0],
+            "Avg-Recall": avg_acc_metrics[1],
+            "Avg-F-measure": avg_acc_metrics[2],
+            "Avg-G-mean": avg_acc_metrics[3],
+        }, {
+            "Std-Precision": std_acc_metrics[0],
+            "Std-Recall": std_acc_metrics[1],
+            "Std-F-measure": std_acc_metrics[2],
+            "Std-G-mean": std_acc_metrics[3],
+        }
+
+
+class adaboost:
+    def __init__(self, T: int):
+        self.T = T
+        self.w = []
+        self.n_data = None
+        self.classifier = []
+        self.alpha = []
+
+    def compute_error(self, label, predict):
+        return np.sum(self.w * (label != predict)) / np.sum(self.w)
+
+    def compute_alpha(self, err):
+        return np.log((1 - err) / err)
+
+    def update_weights(self, label, predict):
+        alpha = self.alpha[-1]
+        self.w *= np.exp(alpha * (label != predict))
+
+    def fit(self, data: np.ndarray, label: np.ndarray):
+        data = data.copy()
+        label = label.copy()
+        label[label == 0] = -1
+        self.n_data = data.shape[0]
+
+        self.w = np.array([1 / self.n_data] * self.n_data)
+
+        for _ in range(self.T):
+            clf = DecisionTreeClassifier()
+            clf.fit(X=data, y=label, sample_weight=self.w)
+            predicted = clf.predict(data)
+            self.classifier.append(clf)
+
+            err = self.compute_error(label, predicted)
+
+            alpha = self.compute_alpha(err)
+            self.alpha.append(alpha)
+            self.update_weights(label, predicted)
+
+        self.alpha = np.array(self.alpha)
+
+    def predict(self, data: np.ndarray):
+        predict = np.zeros(data.shape[0])
+        for i in range(self.T):
+            predict += self.alpha[i] * self.classifier[i].predict(data)
+        predict = np.sign(predict)
+
+        predict[predict == -1] = 0
+
+        return predict
+
+
+DS_Covid19HDDT = "Dataset/Covid19HDDT.csv"
+DS_Covid = "Dataset/Covid.csv"
 
 max_depth = [2, 3, 4, 5]
 cut_off = [10, 50, 500]
 n_iteration = 10
 
-data, label = preprocess.read_dataset(DS_path)
+data, label = preprocess.read_dataset(DS_Covid)
+label[label == -1] = 0
+data = preprocess.fill_missing_value(data=data, method="mode")
+
 data = preprocess.remove_correlated_with_label_by_hellinger(
-    data=data, label=label, threshold=0.3
+    data=data, label=label, threshold=1
 )
+
+# balance imbalance data with under_sampling
+data, label = preprocess.bootstrap_with_under_sampling(data, label)
+
+
+acc_DT = np.empty((0, 4))
+acc_my_adaboost = np.empty((0, 4))
+acc_biultin_adaboost = np.empty((0, 4))
+
+for _ in range(n_iteration):
+    # Split train and test
+    data_train, data_test, label_train, label_test = train_test_split(
+        data, label, test_size=0.3, stratify=label
+    )
+
+    clf = DecisionTreeClassifier()
+    clf.fit(data_train, label_train)
+    predicted = clf.predict(data_test)
+    acc = preprocess.accuracy(predicted, label_test)
+    acc_DT = np.vstack((acc_DT, acc))
+
+    model = adaboost(11)
+    model.fit(data_train, label_train)
+    predicted = model.predict(data_test)
+    acc = preprocess.accuracy(predicted, label_test)
+    acc_my_adaboost = np.vstack((acc_my_adaboost, acc))
+
+    clf = AdaBoostClassifier()
+    clf.fit(data_train, label_train)
+    predicted = clf.predict(data_test)
+    acc = preprocess.accuracy(predicted, label_test)
+    acc_biultin_adaboost = np.vstack((acc_biultin_adaboost, acc))
+
+acc_DT = np.mean(acc_DT, axis=0).round(5)
+print(f"Accuracy DT:\n{acc_DT}\n")
+
+acc_my_adaboost = np.mean(acc_my_adaboost, axis=0).round(5)
+print(f"Accuracy My AdaBoost:\n{acc_my_adaboost}\n")
+
+acc_biultin_adaboost = np.mean(acc_biultin_adaboost, axis=0).round(5)
+print(f"Accuracy Built-in AdaBoost:\n{acc_biultin_adaboost}\n")
