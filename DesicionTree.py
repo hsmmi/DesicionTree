@@ -4,8 +4,8 @@ from sklearn.model_selection import train_test_split
 from scipy.stats import mode
 from sklearn.tree import DecisionTreeClassifier
 import sklearn.metrics as metrics
-from sklearn.ensemble import AdaBoostClassifier
 
+# from sklearn.ensemble import AdaBoostClassifier
 # from tabulate import tabulate
 
 
@@ -682,60 +682,3 @@ class adaboost:
         predict[predict == -1] = 0
 
         return predict
-
-
-DS_Covid19HDDT = "Dataset/Covid19HDDT.csv"
-DS_Covid = "Dataset/Covid.csv"
-
-max_depth = [2, 3, 4, 5]
-cut_off = [10, 50, 500]
-n_iteration = 10
-
-data, label = preprocess.read_dataset(DS_Covid)
-label[label == -1] = 0
-data = preprocess.fill_missing_value(data=data, method="mode")
-
-data = preprocess.remove_correlated_with_label_by_hellinger(
-    data=data, label=label, threshold=1
-)
-
-# balance imbalance data with under_sampling
-data, label = preprocess.bootstrap_with_under_sampling(data, label)
-
-
-acc_DT = np.empty((0, 4))
-acc_my_adaboost = np.empty((0, 4))
-acc_biultin_adaboost = np.empty((0, 4))
-
-for _ in range(n_iteration):
-    # Split train and test
-    data_train, data_test, label_train, label_test = train_test_split(
-        data, label, test_size=0.3, stratify=label
-    )
-
-    clf = DecisionTreeClassifier()
-    clf.fit(data_train, label_train)
-    predicted = clf.predict(data_test)
-    acc = preprocess.accuracy(predicted, label_test)
-    acc_DT = np.vstack((acc_DT, acc))
-
-    model = adaboost(11)
-    model.fit(data_train, label_train)
-    predicted = model.predict(data_test)
-    acc = preprocess.accuracy(predicted, label_test)
-    acc_my_adaboost = np.vstack((acc_my_adaboost, acc))
-
-    clf = AdaBoostClassifier()
-    clf.fit(data_train, label_train)
-    predicted = clf.predict(data_test)
-    acc = preprocess.accuracy(predicted, label_test)
-    acc_biultin_adaboost = np.vstack((acc_biultin_adaboost, acc))
-
-acc_DT = np.mean(acc_DT, axis=0).round(5)
-print(f"Accuracy DT:\n{acc_DT}\n")
-
-acc_my_adaboost = np.mean(acc_my_adaboost, axis=0).round(5)
-print(f"Accuracy My AdaBoost:\n{acc_my_adaboost}\n")
-
-acc_biultin_adaboost = np.mean(acc_biultin_adaboost, axis=0).round(5)
-print(f"Accuracy Built-in AdaBoost:\n{acc_biultin_adaboost}\n")
